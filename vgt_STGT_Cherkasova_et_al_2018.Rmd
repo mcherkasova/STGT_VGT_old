@@ -1,0 +1,598 @@
+---
+title: "vgt_STGT Study 1"
+author: "Mariya Cherkasova"
+date: "Jan 1, 2020"
+output: html_document
+---
+VGT analysis for sign- and goal trackers from Study 1 (Cherkasova et al 2018, JN)
+
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_knit$set(root.dir = "***")
+```
+
+# Load packages
+
+```{r, include=FALSE}
+
+rm(list=ls()) #clear env
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(corrplot)
+library(arm)
+library(gridExtra)
+library(sjPlot)
+```
+
+## Pavlovian eye data
+# Compute gaze index; identify ST and GT
+Interest period for fixations excludes the orienting response, which we are assuming is the first 1000ms of the CS phase
+
+Files excluded from analysis for insufficient trials: 121,154,171,177, 209 (mislabeled as 709)
+
+Participants who spend >80 of the time looking at neither the CS nor the US are also excluded	
+
+Missing ST data file for 219; manual IA correction for drift: 141,155,228, 158
+
+Gaze index computed as %dwell_time(CS)-%dwell_time(US)
+
+STs and GTs identified using tertiary split
+
+```{r, include=FALSE}
+# Aggregated data files (.csv) are available on OSF (https://osf.io/9b34v/)
+stdata <- read.csv("***/st_jn_or1000.csv")
+pit <- read.csv("***/PIT_version_jn.csv")
+names(pit)[1]<-"id"
+
+#Rename
+names(stdata)[1] <- "id"
+names(stdata)[2] <- "trial"
+names(stdata)[3] <- "IA"
+names(stdata)[6] <- "dt"
+names(stdata)[7] <- "ptdt"
+
+#Determine whether a participant should be excluded: >20 trials without fixations
+zerofixtrials <- stdata %>% 
+  dplyr::group_by(id,trial) %>% 
+  dplyr::summarise(totalfix=sum(dt)) %>% 
+  dplyr::filter(totalfix==0)
+
+zerofixtrials$ones <- rep(1,nrow(zerofixtrials))
+
+zerosum_subj <- zerofixtrials %>% 
+  dplyr::group_by(id) %>% 
+  dplyr::summarise(numzeros=sum(ones)) %>% 
+  dplyr::filter(numzeros>20)
+
+stdata_trimmed <- stdata %>% 
+  dplyr::filter(!id %in% c(121,154,171,177,709))
+
+smry <- stdata_trimmed %>% 
+  dplyr::group_by(id) %>% 
+  dplyr::summarise(n=n())
+  
+CSplus_h1 <- stdata_trimmed %>% 
+  filter(half==1) %>% 
+  filter(fractal=="win_fractal.jpg") %>% 
+  dplyr::select(id,IA,dt,ptdt) %>% 
+  dplyr::group_by(id,IA) %>% 
+  dplyr::summarise(meanptdt=mean(ptdt), meandt = mean(dt)) %>% 
+  pivot_wider(names_from = IA, values_from=c(meanptdt,meandt)) %>% 
+  mutate(gazeidx=meanptdt_CS-meanptdt_US) %>% 
+  mutate(backgroundgaze=1-(meanptdt_CS+meanptdt_US))
+
+CSplus_h2 <- stdata_trimmed %>% 
+  filter(half==2) %>% 
+  filter(fractal=="win_fractal.jpg") %>%
+  dplyr::select(id,IA,dt,ptdt) %>% 
+  dplyr::group_by(id,IA) %>% 
+  dplyr::summarise(meanptdt=mean(ptdt), meandt = mean(dt)) %>% 
+  pivot_wider(names_from = IA, values_from=c(meanptdt,meandt)) %>% 
+  mutate(gazeidx=meanptdt_CS-meanptdt_US) %>% 
+  mutate(backgroundgaze=1-(meanptdt_CS+meanptdt_US))
+
+CSminus_h1 <- stdata_trimmed %>% 
+  filter(half==1) %>% 
+  filter(fractal=="nowin_fractal.jpg") %>% 
+  dplyr::select(id,IA,dt,ptdt) %>% 
+  dplyr::group_by(id,IA) %>% 
+  dplyr::summarise(meanptdt=mean(ptdt), meandt = mean(dt)) %>% 
+  pivot_wider(names_from = IA, values_from=c(meanptdt,meandt)) %>% 
+  mutate(gazeidx=meanptdt_CS-meanptdt_US) %>% 
+  mutate(backgroundgaze=1-(meanptdt_CS+meanptdt_US))
+
+CSminus_h2 <- stdata_trimmed %>% 
+  filter(half==2) %>% 
+  filter(fractal=="nowin_fractal.jpg") %>% 
+  dplyr::select(id,IA,dt,ptdt) %>% 
+  dplyr::group_by(id,IA) %>% 
+  dplyr::summarise(meanptdt=mean(ptdt), meandt = mean(dt)) %>% 
+  pivot_wider(names_from = IA, values_from=c(meanptdt,meandt)) %>% 
+  mutate(gazeidx=meanptdt_CS-meanptdt_US) %>% 
+  mutate(backgroundgaze=1-(meanptdt_CS+meanptdt_US))
+
+# Find participant that don't look at the CS or US >80% of the time
+a <- CSplus_h2$backgroundgaze
+b <- CSplus_h1$backgroundgaze
+c <- CSminus_h2$backgroundgaze
+d <- CSminus_h1$backgroundgaze
+
+CSplus_h2$bkgd <- (a+b+c+d)/4
+CSplus_h1$bkgd <- (a+b+c+d)/4
+CSminus_h2$bkgd <- (a+b+c+d)/4
+CSminus_h1$bkgd <- (a+b+c+d)/4
+
+CSplus_h2_tr <- CSplus_h2 %>% 
+  filter(bkgd<.8)
+CSplus_h1_tr <- CSplus_h1 %>% 
+  filter(bkgd<.8)
+CSminus_h2_tr <- CSminus_h2 %>% 
+  filter(bkgd<.8)
+CSminus_h1_tr <- CSminus_h1 %>% 
+  filter(bkgd<.8)
+
+#median_csplush2_tr <- median(CSplus_h2_tr$gazeidx)
+#GTs_tr <- CSplus_h2_tr %>% 
+ # filter(gazeidx<=median_csplush2_tr)
+
+# Define STs and GTs
+gt_tertile <- quantile(CSplus_h2_tr$gazeidx, probs = 0.33333)
+st_tertile <- quantile(CSplus_h2_tr$gazeidx, probs = 0.66666)
+
+CSplus_h2_tr$STGT_ter <- ifelse(CSplus_h2_tr$gazeidx > gt_tertile & CSplus_h2_tr$gazeidx < st_tertile,"IM",ifelse(CSplus_h2_tr$gazeidx <gt_tertile,"GT","ST"))
+
+CSplus_h1_tr$STGT_ter <- CSplus_h2_tr$STGT_ter
+CSminus_h1_tr$STGT_ter <- CSplus_h2_tr$STGT_ter
+CSminus_h2_tr$STGT_ter <- CSplus_h2_tr$STGT_ter
+
+stid <- CSplus_h2_tr$id
+versionid <- pit$id
+d <-setdiff(versionid,stid)
+version <- pit %>% 
+  filter(!id %in% d)
+
+
+CSplus_h2_tr$version <- ifelse(version$version=="PIT1"|version$version=="PIT2","1","2")
+CSplus_h1_tr$version <- ifelse(version$version=="PIT1"|version$version=="PIT2","1","2")
+CSminus_h2_tr$version <- ifelse(version$version=="PIT1"|version$version=="PIT2","1","2")
+CSminus_h1_tr$version <- ifelse(version$version=="PIT1"|version$version=="PIT2","1","2")
+
+#write.csv(CSplus_h2_tr, " STGT_CSplus2_tertiary_split.csv ")
+```
+
+# Gaze index histograms
+
+```{r}
+# Look at gaze idx
+par(mfrow=c(3,3))
+hist(CSplus_h1$gazeidx)
+hist(CSplus_h2$gazeidx)
+hist(CSminus_h1$gazeidx)
+hist(CSminus_h2$gazeidx)
+plot(CSplus_h2$gazeidx, CSminus_h2$gazeidx)
+plot(CSplus_h1$gazeidx, CSminus_h1$gazeidx)
+
+hist_ter <- CSplus_h2_tr %>% 
+  ggplot(aes(x=gazeidx,fill=STGT_ter))+
+  geom_histogram(binwidth=0.05,color="black") +
+  scale_fill_manual(values=c("grey", "white", "orange"))+
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        legend.title = element_blank(),
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        axis.title=element_text(size=14)) + xlab("Gaze index") 
+ 
+#ggsave(filename="stgt_hist_JN.tiff", plot=hist, width = 6, height = 4.5 )
+hist_ter
+
+```
+
+#Gaze index histogram dimensional
+
+```{r}
+hist <- CSplus_h2_tr %>% 
+  ggplot(aes(x=gazeidx))+
+  geom_histogram(binwidth=0.05,color="black",fill="grey") +
+  #scale_fill_manual(values=c("grey", "white", "orange"))+
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        legend.title = element_blank(),
+        axis.text.x=element_text(angle=0, size=20, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=20, vjust=0.5),
+        axis.title=element_text(size=20)) + xlab("Gaze index") 
+ 
+ggsave(filename="stgt_hist_JN1.tiff", plot=hist, width = 6, height = 4.5 )
+hist
+```
+
+# CR expression as a function of hemiblock
+
+```{r}
+# Combine H1 and H2
+CSplus_h1_2_tr <- rbind(CSplus_h1_tr,CSplus_h2_tr)
+CSplus_h1_2_tr$half <- c(rep("hemiblock 1",nrow(CSplus_h2_tr)),rep("hemiblock 2",nrow(CSplus_h2_tr)))
+CSplus_h1_2_tr$cs <- c(rep("plus",nrow(CSplus_h1_2_tr)))
+
+CSminus_h1_2_tr <- rbind(CSminus_h1_tr,CSminus_h2_tr)
+CSminus_h1_2_tr$half <- c(rep("hemiblock 1",nrow(CSminus_h2_tr)),rep("hemiblock 2",nrow(CSminus_h2_tr)))
+CSminus_h1_2_tr$cs <- c(rep("minus",nrow(CSminus_h1_2_tr)))
+
+CSplus_h1_2_tr_ter <- CSplus_h1_2_tr %>% 
+  filter(!STGT_ter=="IM")
+CSminus_h1_2_tr_ter <- CSminus_h1_2_tr %>% 
+  filter(!STGT_ter=="IM")
+
+h1_2_tr_ter <- rbind(CSplus_h1_2_tr_ter,CSminus_h1_2_tr_ter)
+
+ml.plus <- glm(gazeidx~ half*STGT_ter + version, data=CSplus_h1_2_tr_ter) 
+summary(ml.plus)
+
+ml.minus <- glm(gazeidx~ half*STGT_ter + version, data=CSminus_h1_2_tr_ter) 
+summary(ml.minus)
+
+# Post hoc
+h1_2_tr_ter_st <- h1_2_tr_ter %>% 
+  filter(STGT_ter=="ST")
+
+h1_2_tr_ter_gt <- h1_2_tr_ter %>% 
+  filter(STGT_ter=="GT")
+
+ml.st <- glm(gazeidx~ half+version, data=h1_2_tr_ter_st)
+ml.gt <- glm(gazeidx~ half+version, data=h1_2_tr_ter_gt)
+summary(ml.gt)
+
+
+# Stripchart
+
+strip_plus <- CSplus_h1_2_tr_ter %>% 
+  ggplot(aes(x=half,y=gazeidx,group=id))+
+  geom_point(aes(fill=STGT_ter), shape = 21, colour = "black", size=4, position=position_dodge(width=0.0)) +
+  geom_line(size=0.5, colour="black", position=position_dodge(width=0.0)) +
+  xlab("") +
+  ggtitle("CS+") +
+  scale_fill_manual(values=c("grey", "orange"), guide=FALSE) + 
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        plot.title = element_text(hjust = 0.5, size=14),
+        axis.title=element_text(size=14)) + ylab("Gaze index") 
+#ggsave(filename="CS_plus_stgt_h1_h2_stripchart_JN.tiff", plot=strip_plus, width = 6, height = 4.5 )
+
+strip_minus <- CSminus_h1_2_tr_ter %>% 
+  ggplot(aes(x=half,y=gazeidx,group=id))+
+  geom_point(aes(fill=STGT_ter), shape = 21, colour = "black", size=4, position=position_dodge(width=0.0)) +
+  geom_line(size=0.5, colour="black", position=position_dodge(width=0.0)) +
+  xlab("") +
+  ggtitle("CS-") +
+  scale_fill_manual(values=c("grey", "orange"), guide=FALSE) + 
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        plot.title = element_text(hjust = 0.5,size=14),
+        axis.title=element_text(size=14)) + ylab("Gaze index") 
+#ggsave(filename="CS_minus_stgt_h1_h2_stripchart_JN.tiff", plot=strip_minus, width = 6, height = 4.5 )
+
+grid.arrange(strip_plus,strip_minus,ncol=2)
+```
+
+```{r}
+y <- read.csv("***/vgtCues_jn.csv")
+```
+
+# Data preprocessing Study 1
+
+```{r data prep, include=FALSE}
+y$choicemag <- ifelse(y$hiPchoice==1,y$lomag, y$himag)
+y$choiceprob <- ifelse(y$hiPchoice==1,y$hiprob, y$loprob)
+y$outVal <- ifelse(y$won==1,y$choicemag,0)
+y$outVal_1 <- c(0, y$outVal[1:13099]) #1:{the number of observations-1}
+y$hiPchoice_1 <- c(0, y$hiPchoice[1:13099])
+
+sq <- seq(1,13100,100)
+continualw = data.frame(continualw=0)
+
+for (i in sq) {
+  a <- rle(y$won[i:(i+99)])
+  b <- sequence(a$lengths)
+  b <- data.frame(b)
+  names(b)=names(continualw)
+  continualw=rbind(continualw,b)
+}
+continualw = continualw[-1,]
+y$continualw =continualw 
+y$continual0 = continualw
+y$continualw[y$won=="0"]=0
+y$continual0[y$won=="1"]=0
+
+y$Rep_centered <- y$Rep-5.5 #center Rep
+y$riskychoice <- 1-y$hiPchoice
+y$cues_factor <- ifelse(y$cued==0,"uncued","cued")
+y$stayShift <- ifelse(y$hiPchoice_1==y$hiPchoice,0,1) #0 = stay; 1 = shift
+
+y$order <- ifelse(y$subj==102 | y$subj==103 | y$subj==105 | y$subj==108 | y$subj==111 | y$subj==119 | y$subj==122 | y$subj==125 | y$subj==131 | y$subj==134 | y$subj==141 | y$subj==142 | y$subj==143 | y$subj==147 | y$subj==149 | y$subj==151 | y$subj==154 | y$subj==154 | y$subj==155 | y$subj==157 | y$subj==163 | y$subj==165 | y$subj==172 | y$subj==173 | y$subj==182 | y$subj==183 | y$subj==186 | y$subj==204 | y$subj==229 | y$subj==230 | y$subj==101 | y$subj==112 | y$subj==118 | y$subj==121 | y$subj==128 | y$subj==130 | y$subj==136 | y$subj==138 | y$subj==140 | y$subj==150 | y$subj==153 | y$subj==158 | y$subj==159 | y$subj==164 | y$subj==170 | y$subj==174 | y$subj==175 | y$subj==180 | y$subj==181 | y$subj==187 | y$subj==189 | y$subj==190 | y$subj==195 | y$subj==197 | y$subj==200 | y$subj==206 | y$subj==209 | y$subj==211 | y$subj==212 | y$subj==214 | y$subj==216 | y$subj==217 | y$subj==222 | y$subj==224 | y$subj==226 | y$subj==228, "IV","VI") #0=IV; 1=VI, 
+
+y$gender <- ifelse(y$subj==104 | y$subj==105 | y$subj==108 | y$subj==115 | y$subj==116 | y$subj==122 | y$subj==124 | y$subj==125 | y$subj==131 | y$subj==133 | y$subj==141 | y$subj==142 | y$subj==145 | y$subj==149 | y$subj==154 | y$subj==157 | y$subj==158 | y$subj==165 | y$subj==167 | y$subj==176 | y$subj==178 | y$subj==180 | y$subj==196 | y$subj==199 | y$subj==200 | y$subj==202 | y$subj==205 | y$subj==206 | y$subj==207 | y$subj==208 | y$subj==209 | y$subj==210 | y$subj==211 | y$subj==212 | y$subj==213 | y$subj==214 | y$subj==215 | y$subj==216 | y$subj==217 | y$subj==218 | y$subj==219 | y$subj==220 | y$subj==221 | y$subj==222 | y$subj==223 | y$subj==224 | y$subj==225 | y$subj==226 | y$subj==227 | y$subj==228 | y$subj==229 | y$subj==230 | y$subj==231, "male","female")
+
+```
+
+#Isometric log ratio transformations. 
+We are assuming here that both probabilities and magnitudes are compositional data. This is clearly the case with probabilities,as they always add up to 1.It also appears to be the case with magnitudes: data are defined as compositional when its components carry only relative information, which is the case with the magnitudes.  That is each gamble inherently carries a maximum gain value, and one gain value is always evaluated relative to the other.
+
+These variables are only used in the analysis of the effects of reward probability and magnitude.
+
+```{r LRT, include=FALSE}
+
+# 'z' is an 'n' by 'k' matrix of positive observations with k>=2.  In our case 'n' is all the rows (or trials) and 'k' is the two probabilities that add up to 1.  To start, we creat maxtrix 'z'.
+
+z <- cbind(y$hiprob,y$loprob)
+zz <- cbind(y$himag,y$lomag)
+
+ilr <- function(z, p=0) {
+  y <- log(z)
+  if(p != 0) y <- (exp(p * y)-1)/p   #box cox transformation
+  y <- y - rowMeans(y, na.rm = TRUE) #recentered values
+  k <- dim(y)[2]
+  H <- contr.helmert(k)              #dimensions k by k-1
+  H <- t(H)/sqrt((2:k)*(2:k-1))      #dimensions k-1 by k
+  return(y %*% t(H))                 #Rotated/reflected values
+}
+
+# Obtain the ILR
+
+y$probLR <- ilr(z)
+y$magLR <- ilr(zz)  #for magnitudes
+
+```
+
+# Combine with Pavlovian data
+
+```{r clean, include=FALSE}
+vgtid <- unique(y$subj)
+stid <- CSplus_h2_tr$id
+toX <- setdiff(vgtid,stid)
+
+data <- y %>% filter(!subj %in% toX) %>% 
+  arrange(subj,cued,Trl)
+
+hundredtrials <- 1:100
+gazeIdx_xpand <- expand.grid(hundredtrials,CSplus_h2_tr$gazeidx)
+stgt_xpand <- expand.grid(hundredtrials,CSplus_h2_tr$STGT_ter)
+pitversion_xpand <- expand.grid(hundredtrials,CSplus_h2_tr$version)
+data$gazeidx <- gazeIdx_xpand$Var2
+data$STGT <- stgt_xpand$Var2
+data$pitversion <- pitversion_xpand$Var2
+data$subj <- as.factor(data$subj)
+data$EVR=data$EVR*-1
+
+data_Xim <- data %>% 
+  filter(!STGT=="IM")
+
+names(data)[28]<-"Gaze_index"
+
+```
+
+# GLM (categorical): Cues * STGT *EVR interaction
+Gaze index calculated based on the interest period excluding the first 1000ms considered the Orienting response
+Quantified as % of total fixation time spent of CS and US
+ST and GT defined using a teriary split
+
+```{r STGT EVR model}
+
+data_Xim$STGT <- relevel(data_Xim$STGT, ref = "GT") # The levels of a factor are re-ordered so that the level specified by ref is first and the others are moved down.
+
+ml = glmer(riskychoice ~ STGT*cues_factor*EVR + order + Rep_centered +(Rep_centered+EVR|subj), data=data_Xim, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
+summary(ml)
+cc <- confint(ml,parm="beta_",method="Wald")  ## slow (~ 11 seconds)
+ctab <- cbind(est=fixef(ml),cc)
+rtab <- exp(ctab)
+print(rtab,digits=3)
+
+# Plot fixed and random effects
+p <- plot_model(ml,type="pred", terms=c("EVR", "cues_factor", "STGT"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+ggsave(filename="ST_VGT_cues_model_plot.tiff", plot=p, width = 7, height = 4.5 )
+
+plot_model(ml,type="pred", terms=c("Rep_centered","subj"),pred.type="re", colors="Set3")
+plot_model(ml,type="pred", terms=c("EVR", "subj", "cues_factor"),pred.type="re", colors = "Set3")
+
+```
+
+
+# GLM (categorical) excluding #214 
+Excluding 214, which is a highly influential observation, resulted in a trend for a main effect of ST. However, there is no clear reason to exclude this observation.
+
+```{r}
+dataX214 <- data_Xim %>% 
+  filter(!subj=="214")
+
+ml.1 = glmer(riskychoice ~ STGT*cues_factor*EVR + order+ Rep_centered + (EVR+Rep_centered|subj), data=dataX214, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
+summary(ml.1)
+cc <- confint(ml.1,parm="beta_",method="Wald")  ## slow (~ 11 seconds)
+ctab <- cbind(est=fixef(ml.1),cc)
+rtab <- exp(ctab)
+print(rtab,digits=3)
+
+# Plot fixed and random effects
+#plot_model(ml, type="pred")
+plot_model(ml.1,type="pred", terms=c("EVR", "cues_factor", "STGT"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+
+plot_model(ml.1,type="pred", terms=c("EVR", "STGT"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))
+
+```
+
+# GLM2 dimensional: Cues*Gaze_index*EVR 
+
+```{r}
+ml.2 = glmer(riskychoice ~ Gaze_index*cues_factor*EVR + order+ Rep_centered + (EVR+Rep_centered|subj), data=data, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
+summary(ml.2)
+cc <- confint(ml.2,parm="beta_",method="Wald")  ## slow (~ 11 seconds)
+ctab <- cbind(est=fixef(ml.2),cc)
+rtab <- exp(ctab)
+print(rtab,digits=3)
+
+p.2 <- plot_model(ml.2,type="pred", terms=c("EVR", "cues_factor", "Gaze_index"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+p.2
+
+ggsave(filename="ST_VGT_cues_dimensional_model_plot.tiff", plot=p.2, width = 10, height = 4.5 )
+```
+
+# GLM2 dimensional: Cues*Gaze_index*EVR; excluding 214
+
+```{r}
+data_x214 <- data %>% 
+  filter(!subj=="214")
+
+ml.3 = glmer(riskychoice ~ Gaze_index*cues_factor*EVR + order+ Rep_centered + (EVR+Rep_centered|subj), data=data_x214, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
+summary(ml.3)
+cc <- confint(ml,parm="beta_",method="Wald")  ## slow (~ 11 seconds)
+ctab <- cbind(est=fixef(ml.3),cc)
+rtab <- exp(ctab)
+print(rtab,digits=3)
+
+plot_model(ml.3,type="pred", terms=c("EVR", "cues_factor", "Gaze_index"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+
+
+```
+Outliers
+```{r outliers, include=FALSE}
+
+# https://journal.r-project.org/archive/2012-2/RJournal_2012-2_Nieuwenhuis~et~al.pdf
+# Influence.ME package
+# . Are any participants outliers? Visual inspection
+participant_averages<- unique(subset(data,select=c(subj,EVR)))
+participant_averages$choiceaverage <- with(data,tapply(riskychoice, subj, mean))
+# 20 participants in each plot so can view. Are there any participoant outliers? No.
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(1:200),], type=c("p","a"), xlab="Participant",ylab="Average choice")
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(201:400),], type=c("p","a"), xlab="subj",ylab="Average choice")
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(401:600),], type=c("p","a"), xlab="subj",ylab="Average choice")
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(601:800),], type=c("p","a"), xlab="subj",ylab="Average choice")
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(801:1000),], type=c("p","a"), xlab="subj",ylab="Average choice")
+dotplot(choiceaverage ~ factor(subj), participant_averages[c(1001:1200),], type=c("p","a"), xlab="subj",ylab="Average choice")
+```
+
+# GLM1: Model diagnostics
+Residuals
+
+```{r residuals, include=FALSE}
+# resid plot - are they normal?
+plot(resid(ml))
+
+binnedplot(fitted(ml), 
+           residuals(ml, type = "response"), 
+           nclass = NULL, 
+           xlab = "Expected Values", 
+           ylab = "Average residual", 
+           main = "Binned residual plot", 
+           cex.pts = 0.8, 
+           col.pts = 1, 
+           col.int = "gray")
+
+# Predictor variable linearity - should be same at each level of EV. Looks like smaller resi at high EV (presumably bound by ceiling/floor). 
+ggplot(data.frame(x1=data_Xim$EVR,pearson=residuals(ml,type="pearson")),
+      aes(x=x1,y=pearson)) +
+    geom_point() +
+    theme_bw()
+```
+Influence
+```{r influence, include=FALSE}
+# Run influence.ME to do mathematical of above
+model_est <- influence(ml,group="subj", count = TRUE)
+#saveRDS(model_est, file = "vgt_STGT_JN_influenceme_ml.rds")
+#model_est <- readRDS("vgt_STGT_JN_influenceme_ml.rds")
+```
+dfbetas
+```{r r dfbetas, fig.height=60, fig.width=10, include=FALSE}
+model_est.dfB <- dfbetas(model_est) #214 might be influential
+plot(model_est,which="dfbetas",parameters=c(2,3,4,6,7,10),cutoff=0.147, xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n)
+
+```
+Cooks
+```{r cooks, fig.height=60, fig.width=10, include=FALSE}
+cooks.distance(model_est,parameter=2,3,4,6,7,10) #214 might be influential
+plot(model_est,which ='cook' , sort=TRUE, cutoff =0.02, xlab="Cook´s Distance", ylab="Participant") # cutoff value 4/n
+
+```
+Model significance
+```{r GLM1 sigtest, include=FALSE}
+sigtest(model_est, test=1.96)$`EVR` # no cases whose elimination alters significance
+sigtest(model_est, test=1.96)$`STGTST:EVR`# no cases change significance
+sigtest(model_est, test=1.96)$`STGTST` # no cases change significance
+sigtest(model_est, test=-1.96)$`cues_factoruncued` # 125, 155, 214 change significance; 214 also has a large Cook's distance and df-beta
+sigtest(model_est, test=1.96)$`Rep_centered` # no cases change significance
+sigtest(model_est, test=1.96)$`STGTST:cues_factoruncued` # no cases change significance
+sigtest(model_est, test=1.96)$`STGTST:cues_factoruncued:EVR` # no cases change significance
+
+```
+
+# GLM2: Model diagnostics
+Residuals
+
+```{r residuals2, include=FALSE}
+# resid plot - are they normal?
+plot(resid(ml.2))
+
+binnedplot(fitted(ml.2), 
+           residuals(ml.2, type = "response"), 
+           nclass = NULL, 
+           xlab = "Expected Values", 
+           ylab = "Average residual", 
+           main = "Binned residual plot", 
+           cex.pts = 0.8, 
+           col.pts = 1, 
+           col.int = "gray")
+
+# Predictor variable linearity - should be same at each level of EV. Looks like smaller resi at high EV (presumably bound by ceiling/floor). 
+ggplot(data.frame(x1=data$EVR,pearson=residuals(ml.2,type="pearson")),
+      aes(x=x1,y=pearson)) +
+    geom_point() +
+    theme_bw()
+```
+Influence
+```{r influence2, include=FALSE}
+# Run influence.ME to do mathematical of above
+model_est2 <- influence(ml.2,group="subj", count = TRUE) 
+#saveRDS(model_est2, file = "vgt_STGT_JN_influenceme_dimensional_ml.rds")
+
+#model_est2 <- readRDS("vgt_STGT_JN_influenceme_dimensional_ml.rds")
+```
+dfbetas
+```{r r dfbetas2, fig.height=60, fig.width=10, include=FALSE}
+model_est2.dfB <- dfbetas(model_est2) #214 might be influential
+plot(model_est2,which="dfbetas",parameters=c(2,3,4,6,7,10),cutoff=0.147, xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n)
+
+```
+Cooks
+```{r cooks2, fig.height=60, fig.width=10, include=FALSE}
+cooks.distance(model_est2,parameter=2,3,4,6,7,10) #214 might be influential
+plot(model_est2,which ='cook' , sort=TRUE, cutoff =0.02, xlab="Cook´s Distance", ylab="Participant") # cutoff value 4/n
+
+```
+Model significance
+```{r GLM2 sigtest, include=FALSE}
+sigtest(model_est2, test=1.96)$`EVR` # no cases whose elimination alters significance
+sigtest(model_est2, test=1.96)$`Gaze_index:EVR`# no cases change significance
+sigtest(model_est2, test=1.96)$`Gaze_index` # no cases change significance
+sigtest(model_est2, test=-1.96)$`cues_factoruncued` # no cases change significance
+sigtest(model_est2, test=1.96)$`Rep_centered` # no cases change significance
+sigtest(model_est2, test=1.96)$`Gaze_index:cues_factoruncued` # 125, 225, 214 change significance; 214 also has a large Cook's distance and df-beta
+sigtest(model_est2, test=1.96)$`Gaze_index:cues_factoruncued:EVR` # 214 changes significance; 214 also has a large Cook's distance and df-beta
+
+```

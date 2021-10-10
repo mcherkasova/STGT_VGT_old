@@ -1,0 +1,244 @@
+---
+title: "CS rating and IC"
+author: "MC"
+date: "April 25, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "***")
+```
+# Load packages, read in the data
+```{r, packages, include=FALSE}
+
+rm(list=ls()) #clear env
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(arm)
+library(gridExtra)
+library(sjPlot)
+```
+# Ratings data
+Analyses of subjective responses (measured as self-report ratings) to the CS+ and the CS-
+```{r, include=FALSE}
+# Data files (.csv) are available on OSF (https://osf.io/h7v4w/)
+# ST1
+st1 <- data.frame(id=0, version=0, CSplus=0, CSminus=0)
+datadir <- "***/ST1/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  data <- c(i,1, data[41,5],data[41,6])
+  names(data)=names(st1)
+  st1=rbind(st1,data)
+}
+st1=st1[-1,]
+
+# ST2
+st2 <- data.frame(id=0, version=0, CSplus=0, CSminus=0)
+datadir <- "***/ST2/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  data <- c(i,2, data[41,5],data[41,6])
+  names(data)=names(st2)
+  st2=rbind(st2,data)
+}
+st2=st2[-1,]
+
+# ST3
+st3 <- data.frame(id=0,version=0, CSplus=0, CSminus=0)
+datadir <- "***/ST3/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  data <- c(i,3, data[41,6],data[41,5])
+  names(data)=names(st3)
+  st3=rbind(st3,data)
+}
+st3=st3[-1,]
+
+# ST4
+st4 <- data.frame(id=0,version=0, CSplus=0, CSminus=0)
+datadir <- "***/ST4/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  data <- c(i,3, data[41,6],data[41,5])
+  names(data)=names(st4)
+  st4=rbind(st4,data)
+}
+st4=st4[-1,]
+
+ratings <- rbind(st1,st2,st3,st4)
+ratings$CSplus <- as.numeric(ratings$CSplus)
+ratings$CSminus <- as.numeric(ratings$CSminus)
+ratings$CSplus_num <- ifelse(ratings$CSplus<351,1,ifelse(ratings$CSplus<487,2,ifelse(ratings$CSplus<614,3,ifelse(ratings$CSplus<729,4,5))))
+ratings$CSminus_num <- ifelse(ratings$CSminus<351,1,ifelse(ratings$CSminus<487,2,ifelse(ratings$CSminus<614,3,ifelse(ratings$CSminus<729,4,5))))
+
+ratings <- ratings %>% 
+  arrange(id)
+
+STGT <- read.csv("***/STGT_CSplus2_tertiary_splitJN.csv")
+
+ratings$STGT <- STGT$STGT
+ratings$gazeidx <- STGT$gazeidx
+
+ratings_long <- ratings %>% 
+  pivot_longer(cols=c(CSplus_num,CSminus_num),names_to = "CS")
+
+ratings_long$version <- as.factor(ratings_long$version)
+
+
+```
+# Ratings model
+```{r}
+ratings_longXim <- ratings_long %>% 
+  filter(!STGT=="IM")
+
+ml <- glm(value~ CS*STGT + version, data=ratings_longXim) 
+summary(ml)
+
+plot_model(ml ,type="pred", terms=c("CS","STGT"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))
+
+p <- ratings_longXim %>% 
+  ggplot(aes(x=CS, y=value, fill=STGT)) +
+  geom_boxplot(alpha=0.6) +
+  geom_jitter(aes(colour=STGT,group=STGT), position = position_jitterdodge(), shape=21, size=3, colour="black")+
+  xlab("") +
+  scale_x_discrete(labels=(c("CS-", "CS+")))+
+  scale_colour_manual(values=c("black", "orange")) + 
+  scale_fill_manual(values=c("grey","orange")) + 
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank(),legend.title = element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        axis.title=element_text(size=14)) + ylab("Subjective liking ratings") 
+
+p
+#ggsave(filename="CS_liking_NCRG.tiff", plot=p, width = 6, height = 4.5 )
+
+# Check if removing influential observations makes a diff: it does not
+
+#ratings_longX <- ratings_long[-133,]
+#ml.1 <- glm(value~ CS*STGT + version, data=ratings_longX) 
+#summary(ml.1)
+```
+
+# Ratings dimensional model
+
+```{r}
+ml.1 <- glm(value~ gazeidx*CS + version, data=ratings_long) 
+summary(ml.1)
+
+plot_model(ml.1 ,type="pred", terms=c("gazeidx","CS"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))
+
+p <- ratings_long %>% 
+  ggplot(aes(x=CS, y=value)) +
+  geom_boxplot(alpha=0.6, outlier.shape=8) +
+  geom_jitter(width=0.25,height = 0.1)+
+  xlab("") +
+  scale_x_discrete(labels=(c("CS-", "CS+")))+
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank(),legend.title = element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        axis.title=element_text(size=14)) + ylab("Subjective liking ratings") 
+
+p
+# ggsave(filename="CS_liking_JN.tiff", plot=p, width = 6, height = 4.5 )
+
+
+```
+Check if removing influential observations makes a diff: it does not
+```{r}
+
+ratings_longX <- ratings_long[-133,]
+ml.2 <- glm(value~ CS*gazeidx + version, data=ratings_longX) 
+summary(ml.2)
+```
+
+# Operant data
+
+```{r, include=FALSE}
+ic <- read.csv("C:/Users/mashu/Documents/STUDIES/CUES/STpaper/pct_IC_na.csv")
+names(ic)[1]<-"id"
+
+icids<- ic$id
+stgtids <- STGT_ter$id
+diff <- setdiff(icids,stgtids)
+
+ic_tertiary <- ic %>% 
+  filter(!id %in% diff)
+
+ic_tertiary$group <- as.factor(ratings$version)
+names(ic_tertiary)[4] <- "version" 
+ic_tertiary$STGT <- STGT_ter$STGT_ter
+
+```
+# Operant conditioning model
+```{r}
+ml.o <- glm(percent_congruent~ STGT + version, data=ic_tertiary) 
+summary(ml.o)
+ci <- confint(ml.o) 
+ctab <- cbind(est=coef(ml.o),ci)
+rtab <- exp(ctab)
+print(rtab,digits=3)
+
+plot_model(ml.o ,type="pred", terms="STGT",pred.type="fe", grid = FALSE)
+
+p.1 <- ic_tertiary %>% 
+  ggplot(aes(x=STGT, y=percent_congruent, fill=STGT)) +
+  geom_boxplot(position=position_dodge(width=0.8), alpha=0.6) +
+  geom_jitter(aes(colour=STGT), width=0.1, shape=21, size=3, colour="black")+
+  xlab("") +
+  scale_fill_manual(values=c("grey", "orange")) + 
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(panel.border= element_blank(), legend.title = element_blank()) +
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        axis.title=element_text(size=14)) + ylab("% Rewarded response") 
+p.1
+ggsave(filename="operant_JN.tiff", plot=p.1, width = 6, height = 4.5 )
+
+```
+# One sample t-test
+```{r}
+t.test(ic_tertiary$percent_congruent, mu = 50.0, alternative = "greater")
+
+#write.csv(ic_tertiary, "ic_tertiaryJN.csv")
+```
+
+# Regression diagnostics
+
+```{r}
+plot(ml)
+# Cook's D plot
+# identify D values > 4/(n-k-1)
+cutoff <- 4/((nrow(ic_tertiary)-length(ml$coefficients)-1))
+plot(ml, which=4, cook.levels=cutoff)
+
+plot(ml.o)
+# Cook's D plot
+# identify D values > 4/(n-k-1)
+cutoff <- 4/((nrow(ic_tertiary)-length(ml.o$coefficients)-1))
+plot(ml.o, which=4, cook.levels=cutoff)
+
+
+```
+
+

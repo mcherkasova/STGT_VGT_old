@@ -1,0 +1,156 @@
+---
+title: "Pupil conditioning"
+author: "MC"
+date: "April 25, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "***")
+```
+# Load packages, read in the data
+```{r, packages, include=FALSE}
+
+rm(list=ls()) #clear env
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(corrplot)
+library(arm)
+library(gridExtra)
+library(sjPlot)
+
+```
+
+# Read in and combine data
+
+```{r}
+auc_data <- data.frame(stgt=0, id=0, cs=0, hemiblock=0,trial=0, auc=0, auc_500lag=0)
+
+datadir <- "***/Pupil/study1/"
+files <- list.files(path=datadir, pattern="*.txt")
+for(i in files){
+  data <- read.delim(paste0(datadir,i), header = TRUE, sep = "", dec = ".")
+  stgt <- rep(i,nrow(data))
+  data <- cbind(substr(i, 8, 9),data)
+  names(data)=names(auc_data)
+  auc_data=rbind(auc_data,data)
+}
+auc_data=auc_data[-1,]
+
+stdata <- read.csv("***/STGT_CSplus2_tertiary_splitJN.csv")
+pit <- read.csv("***/PIT_version.csv")
+names(pit)[1]<-"id"
+
+#Trim PIT
+pitid<-pit$id
+stid <- stdata$id
+to_x <- setdiff(pitid,stid)
+pit <- pit %>%
+  filter(!id %in% to_x)
+
+# Combine
+auc_data <- auc_data %>% 
+  arrange(id,trial)
+
+forty <- 1:40
+st_xpand <- expand.grid(forty,stdata$gazeidx)
+version_xpand <- expand.grid(forty,pit$version)
+
+auc_data$version <- version_xpand$Var2
+auc_data$gazeidx <- st_xpand$Var2
+auc_data$cs <- as.factor(auc_data$cs)
+auc_data$hemiblock <- as.factor(auc_data$hemiblock)
+auc_data$tr_scaled <- scale(auc_data$trial)
+auc_data$auc_500lag_scaled <- scale(auc_data$auc_500lag)
+auc_data$auc_500lag_rescaled <- rescale(auc_data$auc_500lag)
+
+# visual AUC distribution
+par(mfrow=c(2,2))
+hist(auc_data$auc)
+hist(auc_data$auc_500lag)
+hist(auc_data$auc_500lag_scaled)
+hist(auc_data$auc_500lag_rescaled)
+
+auc_stgt <- auc_data %>% 
+  filter(!stgt=="im")
+st <- auc_stgt %>% 
+  filter(stgt=="st")
+gt <- auc_stgt %>% 
+  filter(stgt=="gt")
+
+```
+
+# Model: STGT x CS x Trial
+
+```{r}
+ml <- lmer(auc_500lag_scaled ~ stgt*cs*tr_scaled + version + (1+cs+tr_scaled|id), data=auc_stgt,REML = FALSE, control = lmerControl(optimizer ="Nelder_Mead")) #with trial as a random effect
+summary(ml)
+
+# Plot fixed and random effects
+plot_model(ml,type="pred", terms=c("tr_scaled","cs"),pred.type="fe", grid = FALSE)
+
+```
+
+# Model: gaze index x CS x Trial (Dimensional)
+
+```{r}
+
+ml.1 <- lmer(auc_500lag_scaled ~ cs*gazeidx*tr_scaled + version + (1+cs+tr_scaled|id), data=auc_data,REML = FALSE, control = lmerControl(optimizer ="Nelder_Mead")) #with trial as a random effect
+summary(ml.1)
+
+# Plot fixed and random effects
+plot_model(ml.1,type="pred", terms=c("tr_scaled","cs"),pred.type="fe", grid = FALSE)
+
+```
+
+# Regression diagnostics: ml
+
+```{r, include=FALSE}
+# resid plot
+
+plot(resid(ml))
+
+#model_est <- influence(ml,"id") 
+#saveRDS(model_est, file = "ppl_conditioningJN_influenceme_ml.rds")
+model_est <- readRDS(file = "ppl_conditioningJN_influenceme_ml.rds")
+
+model_est.dfB <- dfbetas(model_est)
+plot(model_est,which="dfbetas",parameters=c(2,3,4,8,9),xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n)
+
+cooks.distance(model_est,parameter=c(2,3,4,8,9))
+plot(model_est,which ='cook' , sort=TRUE, xlab="Cook´s Distance", ylab="Participant") # cutoff value sqrt(4/n)
+
+sigtest(model_est, test=-1.96)$hemiblock2
+sigtest(model_est, test=-1.96)$`stgt:hemiblock2`
+
+```
+
+# Regression diagnostics: ml.1
+
+```{r, include=FALSE}
+# resid plot
+plot(resid(ml.1))
+
+#model_est.1 <- influence(ml.1,"id") 
+#saveRDS(model_est.1, file = "ppl_conditioningJN_influenceme_ml1.rds")
+model_est.1 <- readRDS(file = "ppl_conditioningJN_influenceme_ml1.rds")
+
+model_est.1.dfB <- dfbetas(model_est.1)
+plot(model_est.1,which="dfbetas",parameters=c(2,3,4,8,9),xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n): 0.22
+
+cooks.distance(model_est.1,parameter=c(2,3,4,8,9))
+plot(model_est.1,which ='cook' , sort=TRUE, xlab="Cook´s Distance", ylab="Participant") # cutoff value sqrt(4/n): 0.22
+
+sigtest(model_est.1, test=-1.96)$tr_scaled
+sigtest(model_est.1, test=-1.96)$`cs1:tr_scaled`
+
+```
+

@@ -1,0 +1,196 @@
+---
+title: "Pupil conditioning"
+author: "MC"
+date: "April 25, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "***")
+```
+# Load packages, read in the data
+```{r, packages, include=FALSE}
+
+rm(list=ls()) #clear env
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(corrplot)
+library(arm)
+library(gridExtra)
+library(sjPlot)
+
+```
+
+# Read in and combine data
+
+```{r}
+auc_data <- data.frame(stgt=0, id=0, cs=0, hemiblock=0,trial=0, auc=0, auc_500lag=0)
+
+datadir <- "***/Pupil/study2/"
+files <- list.files(path=datadir, pattern="*.txt")
+for(i in files){
+  data <- read.delim(paste0(datadir,i), header = TRUE, sep = "", dec = ".")
+  stgt <- rep(i,nrow(data))
+  data <- cbind(substr(i, 8, 9),data)
+  names(data)=names(auc_data)
+  auc_data=rbind(auc_data,data)
+}
+auc_data=auc_data[-1,]
+
+stdata <- read.csv("***/STGT_CSplus2_tertiary_split_NCRG.csv")
+version <- read.csv("***/rating_IC_NCRG.csv")
+
+names(version)[1]<-"id"
+
+#Trim PIT
+versionid<-version$id
+stid <- stdata$id
+aucid <- unique(auc_data$id)
+to_x <- setdiff(versionid,stid)
+version <- version %>%
+  filter(!id %in% to_x)
+
+# Combine
+auc_data <- auc_data %>% 
+  arrange(id,trial)
+
+forty <- 1:40
+st_xpand <- expand.grid(forty,stdata$gazeidx)
+version_xpand <- expand.grid(forty,version$version)
+
+auc_data$version <- version_xpand$Var2
+auc_data$gazeidx <- st_xpand$Var2
+auc_data$cs <- as.factor(auc_data$cs)
+auc_data$hemiblock <- as.factor(auc_data$hemiblock)
+auc_data$version <- as.factor(auc_data$version)
+auc_data$tr_scaled <- scale(auc_data$trial)#scaling needed for analyses with trial
+auc_data$auc_500lag_scaled <- scale(auc_data$auc_500lag) 
+auc_data$auc_500lag_rescaled <- rescale(auc_data$auc_500lag)
+
+# visual AUC distribution
+par(mfrow=c(2,2))
+hist(auc_data$auc)
+hist(auc_data$auc_500lag)
+hist(auc_data$auc_500lag_scaled)
+hist(auc_data$auc_500lag_rescaled)
+
+auc_stgt <- auc_data %>% 
+  filter(!stgt=="im")
+st <- auc_stgt %>% 
+  filter(stgt=="st")
+gt <- auc_stgt %>% 
+  filter(stgt=="gt")
+
+cs.plus <- auc_data %>% filter(cs=="1")
+cs.minus <- auc_data %>% filter(cs==-1)
+
+
+```
+
+# Model: STGT x CS x Trial
+
+```{r}
+# data should be rescaled if using trial or the dimensional model
+ml <- lmer(auc_500lag_scaled ~ stgt*cs*tr_scaled + version + (1+cs+tr_scaled|id), data=auc_stgt, REML = FALSE, lmerControl(optimizer = "bobyqa")) 
+summary(ml)
+#control = lmerControl(optimizer ="Nelder_Mead")
+
+# Plot fixed and random effects
+plot_model(ml,type="pred", terms=c("cs", "stgt", "tr_scaled"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+plot_model(ml,type="pred", terms=c("tr_scaled"),pred.type="fe", grid = FALSE)
+plot_model(ml,type="pred", terms=c("tr_scaled","cs"),pred.type="fe", grid = FALSE)
+plot_model(ml,type="pred", terms=c("stgt"),pred.type="fe", grid = FALSE)
+plot_model(ml,type="pred", terms=c("cs"),pred.type="fe", grid = FALSE)
+plot_model(ml,type="pred", terms=c("cs","stgt"),pred.type="re")
+
+```
+
+# Model: Gaze index x CS x trial
+
+```{r}
+# data should be rescaled if using trial for the dimensional model
+ml.1 <- lmer(auc_500lag_scaled ~ gazeidx*cs*tr_scaled + version + (1+cs+tr_scaled|id), data=auc_data, REML = FALSE, lmerControl(optimizer = "bobyqa")) 
+summary(ml.1)
+#control = lmerControl(optimizer ="Nelder_Mead")
+
+# Plot fixed and random effects
+plot_model(ml.1,type="pred", terms=c("cs", "gazeidx", "tr_scaled"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+plot_model(ml.1,type="pred", terms=c("tr_scaled"),pred.type="fe", grid = FALSE)
+plot_model(ml.1,type="pred", terms=c("cs","gazeidx"),pred.type="fe", grid = FALSE)
+plot_model(ml.1,type="pred", terms=c("tr_scaled","cs"),pred.type="fe")
+plot_model(ml.1,type="pred", terms=c("gazeidx"),pred.type="fe", grid = FALSE)
+
+```
+
+# Separate follow-up models: CS+ & CS-
+CS+
+
+```{r}
+
+ml.csplus <- lmer(auc_500lag_scaled ~ gazeidx*tr_scaled + (1+tr_scaled|id), data=cs.plus, REML = FALSE, control = lmerControl(optimizer ="bobyqa")) 
+summary(ml.csplus)
+
+plot_model(ml.csplus,type="pred", terms=c("tr_scaled","gazeidx"),pred.type="fe", grid = FALSE)
+
+```
+
+CS-
+
+```{r}
+
+ml.minus <- lmer(auc_500lag_scaled ~ gazeidx*tr_scaled + (1+tr_scaled|id), data=cs.minus, REML = FALSE, control = lmerControl(optimizer ="bobyqa")) 
+summary(ml.minus)
+
+plot_model(ml.minus,type="pred", terms=c("tr_scaled","gazeidx"),pred.type="fe", grid = FALSE)
+
+```
+
+# Regression diagnostics: ml
+
+```{r, include=FALSE}
+# resid plot
+plot(resid(ml))
+
+model_est <- influence(ml,"id") 
+saveRDS(model_est, file = "ppl_conditioningNCRG_influenceme_ml.rds")
+#model_est <- readRDS(file = "ppl_conditioningNCRG_influenceme_ml.rds")
+
+model_est.dfB <- dfbetas(model_est)
+plot(model_est,which="dfbetas",parameters=c(2,3,4,8,9),xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n):0.33
+
+cooks.distance(model_est,parameter=c(2,3,4,8,9))
+plot(model_est,which ='cook' , sort=TRUE, xlab="Cook´s Distance", ylab="Participant") # cutoff value sqrt(4/n):0.33
+
+sigtest(model_est, test=-1.96)$hemiblock2
+sigtest(model_est, test=1.96)$`cs1:hemiblock2`
+
+```
+
+# Regression diagnostics: ml.1
+
+```{r, include=FALSE}
+# resid plot
+plot(resid(ml.1))
+
+model_est.1 <- influence(ml.1,"id") 
+saveRDS(model_est.1, file = "ppl_conditioningNCRG_influenceme_ml1.rds")
+#model_est.1 <- readRDS(file = "ppl_conditioningNCRG_influenceme_ml1.rds")
+
+model_est.1.dfB <- dfbetas(model_est.1)
+plot(model_est.1,which="dfbetas",parameters=c(2,3,4,8,9),xlab="DFbetaS",ylab="Participant") # cutoff value 2/sqrt(n): 0.33
+
+cooks.distance(model_est.1,parameter=c(2,3,4,8,9))
+plot(model_est.1,which ='cook' , sort=TRUE, xlab="Cook´s Distance", ylab="Participant") # cutoff value sqrt(4/n): 0.33
+
+sigtest(model_est.1, test=-1.96)$tr_scaled
+sigtest(model_est.1, test=1.96)$`cs1:tr_scaled`
+
+```

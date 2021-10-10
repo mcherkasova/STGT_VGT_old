@@ -1,0 +1,371 @@
+---
+title: "PIT"
+author: "MC"
+date: "April 25, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "***")
+```
+# Load packages, read in the data
+```{r, packages, include=FALSE}
+
+rm(list=ls()) #clear env
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(corrplot)
+library(arm)
+library(gridExtra)
+library(sjPlot)
+```
+## PIT1 data
+-Congruent response -left; incongruent response - right; CS+=win_fractal=blue (no re-labeling)
+PIT=(number of congruent-incongruent choices/total number of choices)
+```{r,include=FALSE}
+pit1data <- data.frame(id=0, half=0, trial=0, stimulus=0,fractal=0, click_l=0, click_r=0, click_out=0)
+
+datadir <- "***/PIT1/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  id <- rep(i,nrow(data))
+  data <- cbind(id,data)
+  names(data)=names(pit1data)
+  pit1data=rbind(pit1data,data)
+}
+pit1data=pit1data[-1,]
+
+pit1data$block <- ifelse(pit1data$trial<=5,1,ifelse(pit1data$trial<=9,2,3)) #block
+
+# not considering task half
+pit1 <- pit1data %>% 
+  group_by(id,stimulus) %>% 
+  summarise(congruent=sum(click_l),incongruent=sum(click_r))  
+
+pit1$response_idx <- (pit1$congruent-pit1$incongruent)/(pit1$congruent+pit1$incongruent)
+pit1$version <- rep(1,nrow(pit1))
+
+# considering task half
+pit1_h <- pit1data %>% 
+  group_by(id,stimulus,half) %>% 
+  summarise(congruent=sum(click_l),incongruent=sum(click_r))  
+
+pit1_h$response_idx <- (pit1_h$congruent-pit1_h$incongruent)/(pit1_h$congruent+pit1_h$incongruent)
+pit1_h$response_idx <- replace_na(pit1_h$response_idx,0) # Replace NAs
+pit1_h$version <- rep(1,nrow(pit1_h))
+
+```
+## PIT2
+-Congruent response -right; incongruent response - left; CS+=win_fractal=blue (no re-labeling)
+```{r,include=FALSE}
+pit2data <- data.frame(id=0, half=0, trial=0, stimulus=0,fractal=0, click_l=0, click_r=0, click_out=0)
+
+datadir <- "***/PIT2/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  id <- rep(i,nrow(data))
+  data <- cbind(id,data)
+  names(data)=names(pit2data)
+  pit2data=rbind(pit2data,data)
+}
+pit2data=pit2data[-1,]
+pit2data$block <- ifelse(pit2data$trial<=5,1,ifelse(pit1data$trial<=9,2,3)) #block
+
+# not considering task half
+pit2 <- pit2data %>% 
+  group_by(id,stimulus) %>% 
+  summarise(congruent=sum(click_r),incongruent=sum(click_l)) #%>% 
+
+pit2$response_idx <- (pit2$congruent-pit2$incongruent)/(pit2$congruent+pit2$incongruent)
+pit2$version <- rep(2,nrow(pit2))
+
+# considering task half
+pit2_h <- pit2data %>% 
+  group_by(id,stimulus,half) %>% 
+  summarise(congruent=sum(click_r),incongruent=sum(click_l))  
+
+pit2_h$response_idx <- (pit2_h$congruent-pit2_h$incongruent)/(pit2_h$congruent+pit2_h$incongruent)
+pit2_h$response_idx <- replace_na(pit2_h$response_idx,0) # Replace NAs
+pit2_h$version <- rep(2,nrow(pit2_h))
+
+```
+## PIT3
+-Congruent response -left; incongruent response -right; CS+=nowin_fractal=blue; in the data "stimulus" is already relabeled relative to the "fractal" so no relabeling necessary 
+```{r,include=FALSE}
+pit3data <- data.frame(id=0, half=0, trial=0, stimulus=0,fractal=0, click_l=0, click_r=0, click_out=0)
+
+datadir <- "***/PIT3/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  id <- rep(i,nrow(data))
+  data <- cbind(id,data)
+  names(data)=names(pit3data)
+  pit3data=rbind(pit3data,data)
+}
+pit3data=pit3data[-1,]
+pit3data$block <- ifelse(pit3data$trial<=5,1,ifelse(pit3data$trial<=9,2,3)) #block
+
+# not considering task half
+pit3 <- pit3data %>% 
+  group_by(id,stimulus) %>% 
+  summarise(congruent=sum(click_l),incongruent=sum(click_r))  
+
+pit3$response_idx <- (pit3$congruent-pit3$incongruent)/(pit3$congruent+pit3$incongruent)
+pit3$version <- rep(3,nrow(pit3))
+
+# considering task half
+pit3_h <- pit3data %>% 
+  group_by(id,stimulus,half) %>% 
+  summarise(congruent=sum(click_l),incongruent=sum(click_r)) 
+
+pit3_h$response_idx <- (pit3_h$congruent-pit3_h$incongruent)/(pit3_h$congruent+pit3_h$incongruent)
+pit3_h$response_idx <- replace_na(pit3_h$response_idx,0) # Replace NAs
+pit3_h$version <- rep(3,nrow(pit3_h))
+
+```
+## PIT4
+-Congruent response -right; incongruent response - left; CS+=nowin_fractal=blue; in the data "stimulus" is already relabeled relative to the "fractal" so no relabeling necessary 
+```{r, include=FALSE}
+pit4data <- data.frame(id=0, half=0, trial=0, stimulus=0,fractal=0, click_l=0, click_r=0, click_out=0)
+
+datadir <- "***/PIT4/"
+files <- list.files(path=datadir, pattern="*.*")
+for(i in files){
+  data <- read.delim(paste0(datadir,i,"/RESULTS_FILE.txt"))
+  id <- rep(i,nrow(data))
+  data <- cbind(id,data)
+  names(data)=names(pit4data)
+  pit4data=rbind(pit4data,data)
+}
+pit4data=pit4data[-1,]
+pit4data$block <- ifelse(pit4data$trial<=5,1,ifelse(pit4data$trial<=9,2,3)) #block
+
+# not considering task half
+pit4 <- pit4data %>% 
+  group_by(id,stimulus) %>% 
+  summarise(congruent=sum(click_r),incongruent=sum(click_l)) #%>% 
+
+pit4$response_idx <- (pit4$congruent-pit4$incongruent)/(pit4$congruent+pit4$incongruent)
+pit4$version <- rep(4,nrow(pit4))
+
+# considering task half
+pit4_h <- pit4data %>% 
+  group_by(id,stimulus,half) %>% 
+  summarise(congruent=sum(click_r),incongruent=sum(click_l)) #%>% 
+
+pit4_h$response_idx <- (pit4_h$congruent-pit4_h$incongruent)/(pit4_h$congruent+pit4_h$incongruent)
+pit4_h$response_idx <- replace_na(pit4_h$response_idx,0) # Replace NAs
+pit4_h$version <- rep(4,nrow(pit4_h))
+
+```
+# Combine PIT with gaze index
+```{r, include=FALSE}
+PIT <- rbind(pit1,pit2,pit3,pit4)
+PIT$stimulus <- factor(PIT$stimulus, levels = c("win", "nowin", "filler")) # CHANGE REFERENCE
+PIT_h <- rbind(pit1_h,pit2_h,pit3_h,pit4_h)
+
+stdata <- read.csv("***/STGT_CSplus2_tertiary_split_NCRG.csv")
+
+# Compare ids in PIT and ST data and exclude
+a <- stdata$id
+b <- PIT$id
+to_ex <- setdiff(b,a)
+
+PIT_tr <- PIT %>% 
+  filter(!id %in% to_ex) %>% 
+  arrange(id,stimulus)
+PIT_h_tr <- PIT_h %>% 
+  filter(!id %in% to_ex) %>% 
+  arrange(id,stimulus)
+
+three <- 1:3
+six <- 1:6
+stexpandIDX_long <- expand.grid(six,stdata$gazeidx)
+stexpandIDX_short <- expand.grid(three,stdata$gazeidx)
+stgtxpand_short <- expand.grid(three,stdata$STGT_ter)
+stgtxpand_long <- expand.grid(six,stdata$STGT_ter)
+
+PIT_tr$gazeIDX <- stexpandIDX_short$Var2
+PIT_tr$STGT <- stgtxpand_short$Var2
+PIT_h_tr$gazeIDX <- stexpandIDX_long$Var2
+PIT_h_tr$STGT <- stgtxpand_long$Var2
+
+#view PIT response idx distribution
+par(mfrow=c(1,2))
+hist(PIT_tr$response_idx)
+hist(PIT_h_tr$response_idx)
+```
+
+# Combine with IC data, trim data such that in only includes participants who performed the operant task above chance
+
+```{r}
+ic <- read.csv("***/rating_IC_NCRG.csv")
+names(ic)[1]<-"id"
+
+icid <- ic$id
+pitid <- PIT_tr$id
+toX <- setdiff(icid,pitid)
+
+ic <- ic %>% 
+  filter(!id %in% toX)
+
+three <- 1:3 #because there are three stimuli 
+xpand_ic <- expand.grid(three,ic$IC)
+xpand_ic_long <- expand.grid(six,ic$IC)
+
+PIT_tr$ic <- xpand_ic$Var2
+PIT_h_tr$ic <- xpand_ic_long$Var2
+
+PIT_trtr <- PIT_tr %>% 
+  filter(ic>53.9) 
+PIT_h_trtr <- PIT_h_tr %>% 
+  filter(ic>53.9) 
+
+PIT_ter <- PIT_trtr %>% 
+  filter(!STGT=="IM") 
+PIT_h_ter <- PIT_h_trtr %>% 
+  filter(!STGT=="IM") 
+```
+
+## ST/GT PIT models
+#Model not considering hemiblock
+Excluding participants not looking at the CS or US, tertiary split
+```{r}
+
+ml = lm(response_idx ~ STGT*stimulus + version, data=PIT_ter) 
+summary(ml)
+
+# Plot 
+plot_model(ml,type="pred", terms=c("stimulus", "STGT"),pred.type="fe", grid = FALSE, colors=c("black", "orangered"))
+#plot_model(ml,type="pred", terms=c("stimulus"),pred.type="fe", grid = FALSE)
+
+# checking if excluding 39 makes a diff: it doesn't
+#PIT_terX <- PIT_ter[-39,] 
+#mlx = lm(response_idx ~ STGT*stimulus + version, data=PIT_terX) 
+#summary(mlx)
+```
+
+# By hemiblock: categorical (ST/GT)
+
+```{r}
+h1 <- PIT_h_ter %>% 
+  filter(half==1)
+
+h2 <- PIT_h_ter %>% 
+  filter(half==2)
+
+h1$stimulus <- factor(h1$stimulus, levels = c("win", "nowin", "filler")) 
+h2$stimulus <- factor(h2$stimulus, levels = c("win", "nowin", "filler")) 
+
+ml.3 = glm(response_idx ~ STGT*stimulus + version, data=h1, family = gaussian()) 
+summary(ml.3)
+# Plot fixed effects
+plot_model(ml.3,type="pred", terms=c("stimulus","STGT"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+
+ml.4 = glm(response_idx ~ STGT*stimulus + version, data=h2, family = gaussian()) 
+summary(ml.4)
+# Plot fixed effects
+plot_model(ml.4,type="pred", terms=c("stimulus","STGT"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+
+# checking if excluding 35 makes a diff: it doesn't
+#h2X <- h2[-35,]
+#ml.4x = glm(response_idx ~ STGT*stimulus + version, data=h2X, family = gaussian()) 
+#summary(ml.4x)
+```
+
+#Dimensional model
+
+```{r}
+
+ml.5 = glm(response_idx~ gazeIDX*stimulus + version, data=PIT_h_ter, family = gaussian()) 
+summary(ml.5)
+
+plot_model(ml.5,type="pred", terms=c("stimulus","gazeIDX"),pred.type="fe", grid = FALSE)
+
+
+# checking if excluding 113,23 makes a diff: it doesn't
+#PIT_h_terXXX<-PIT_h_ter[-113,] 
+#ml.5xxx = glm(response_idx~ gazeIDX*stimulus*half + version, data=PIT_h_terXXX, family = gaussian()) 
+#summary(ml.5xxx)
+
+#PIT_h_terXXXX<-PIT_h_ter[-23,]
+#ml.5xxxx = glm(response_idx~ gazeIDX*stimulus*half + version, data=PIT_h_terXXXX, family = gaussian()) 
+#summary(ml.5xxxx)
+
+```
+
+# By hemiblock: dimensional
+```{r}
+
+ml.6 = glm(response_idx ~ gazeIDX*stimulus + version, data=h1, family = gaussian()) 
+summary(ml.6)
+# Plot fixed effects
+plot_model(ml.6,type="pred", terms=c("stimulus","gazeIDX"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+
+ml.6 = glm(response_idx ~ gazeIDX*stimulus + version, data=h2, family = gaussian()) 
+summary(ml.6)
+# Plot fixed effects
+plot_model(ml.6,type="pred", terms=c("stimulus","gazeIDX"),pred.type="fe", grid = FALSE, colors=c("black","orangered"))
+
+```
+
+# Regression diagnostics
+
+```{r}
+plot(ml) #check out 39
+ols_plot_cooksd_bar(ml)
+ols_plot_diagnostics(ml)
+
+plot(ml.2) #check out 66
+cutoff <- 4/((nrow(PIT_h_ter)/3-length(ml.2$coefficients)))
+plot(ml.2, which=4, cook.levels=cutoff)
+
+plot(ml.3) 
+cutoff <- 4/((nrow(PIT_h_ter)/3-length(ml.3$coefficients)))
+plot(ml.3, which=4, cook.levels=cutoff)
+
+plot(ml.4) # check out 35
+cutoff <- 4/((nrow(PIT_h_ter)/3-length(ml.4$coefficients)))
+plot(ml.4, which=4, cook.levels=cutoff)
+
+plot(ml.5) # check out 23 and 113
+cutoff <- 4/((nrow(PIT_h_ter)/3-length(ml.5$coefficients)))
+plot(ml.5, which=4, cook.levels=cutoff)
+```
+# Plot
+
+```{r}
+PIT_h_ter$halfactor <- ifelse(PIT_h_ter$half==1,"hemiblock 1", "hemiblock 2")
+PIT_h_ter$stimulus <- factor(PIT_h_ter$stimulus, levels = c("filler", "nowin", "win"))
+
+p <- PIT_h_ter %>% ggplot(aes(x=stimulus, y=response_idx, fill=STGT)) +
+  geom_boxplot() +
+  #geom_jitter(aes(group=STGT, colour=STGT), width=0.2)+
+  xlab("") +
+  scale_x_discrete(labels=(c("N","CS-", "CS+")))+
+  scale_fill_manual(values=c("grey","orange")) + 
+  theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank()) + 
+  theme(axis.line.x = element_line(color="black", size = 0.5),
+        axis.line.y = element_line(color="black", size = 0.5), 
+        axis.text.x=element_text(angle=0, size=12, face="bold", vjust=0.5),
+        axis.text.y=element_text(angle=0, size=12, vjust=0.5),
+        legend.position = "right",
+        axis.title=element_text(size=14)) + ylab("Response index") + 
+  facet_grid(. ~ halfactor)+ theme(strip.text.x = element_text(size=12, face="bold"))
+ggsave(filename="PIT_NCRG.tiff", plot=p, width = 6, height = 4.5 )
+
+
+p
+
+```
