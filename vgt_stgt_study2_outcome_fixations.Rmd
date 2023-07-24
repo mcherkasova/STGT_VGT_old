@@ -1,0 +1,120 @@
+---
+title: "vgt_stgt_Study2_outcome_fixations"
+author: "Mariya Cherkasova"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+Libraries
+
+```{r, include=FALSE}
+rm(list=ls()) #clear env
+library(readr)
+library(lme4)
+library(lattice)
+library(lmerTest)
+library(emmeans)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(influence.ME)
+library(gmodels)#CI
+library(corrplot)
+library(arm)
+library(gridExtra)
+library(sjPlot)
+library(brms)
+```
+
+Load data
+
+```{r include=FALSE}
+fbFixUC_ncrg <- read_csv("ncrg_UC_fb_aggregate_fix.csv")
+fbFixC_ncrg <- read_csv("ncrg_C_fb_aggregate_fix.csv")
+STGT_tertiary_splitNCRG <- read_csv("STGT_CSplus2_tertiary_split_NCRG.csv")
+
+
+
+# ptdt imports as chr, fix that
+#fbFixC_ncrg_gt$ptdt <- as.numeric(fbFixC_ncrg_gt$ptdt)
+#fbFixUC_nrcg$ptdt <- as.numeric(fbFixUC$ptdt)
+
+#fbFixC_ncrg_gt$ptdt[is.na(fbFixC_ncrg_gt$ptdt)] <- 0
+#fbFixUC$ptdt[is.na(fbFixUC$ptdt)] <- 0
+#unique(fbFixC_ncrg_gt$id)
+
+```
+
+Participant-wise % dwell time summaries for cued
+
+```{r}
+fbFixC_ncrg_summ <- fbFixC_ncrg %>% 
+  dplyr::select(!(ia_id)) %>% 
+  pivot_wider(names_from = ia, values_from = c(dt,ptdt)) %>% 
+  mutate(gazeidx_fb=(ptdt_Coins-ptdt_Total)/100)
+fbFixC_ncrg_summ$cues <- rep("cued", nrow(fbFixC_ncrg_summ))
+
+histogram(fbFixC_ncrg_summ$gazeidx_fb)
+
+```
+
+Participant-wise % dwell time summaries for uncued
+```{r}
+fbFixUC_ncrg_summ <- fbFixUC_ncrg %>% 
+  dplyr::select(!(ia_id)) %>% 
+  pivot_wider(names_from = ia, values_from = c(dt,ptdt)) %>% 
+  mutate(gazeidx_fb=(ptdt_Coins-ptdt_Total)/100)
+fbFixUC_ncrg_summ$cues <- rep("uncued", nrow(fbFixUC_ncrg_summ))
+
+histogram(fbFixUC_ncrg_summ$gazeidx_fb)
+```
+
+Merge with STGT with feedback fixation data.
+
+```{r}
+fbFixUC_ncrg_stgt <- inner_join(fbFixUC_ncrg_summ, STGT_tertiary_splitNCRG,by="id")
+fbFixC_ncrg_stgt <- inner_join(fbFixC_ncrg_summ, STGT_tertiary_splitNCRG,by="id")
+
+fbFix_ncrg_stgt <- rbind(fbFixUC_ncrg_stgt,fbFixC_ncrg_stgt)
+
+```
+
+Look at plots, run regressions
+
+```{r}
+ml <- lmer(gazeidx_fb~gazeidx*cues + (1|id),data=fbFix_ncrg_stgt)
+summary(ml)
+
+ggplot(fbFix_ncrg_stgt, aes(x=gazeidx, y=gazeidx_fb,color=cues,fill=cues))+
+       geom_point()+geom_smooth()
+
+ggplot(fbFix_ncrg_stgt, aes(x=STGT_ter, y=gazeidx_fb,color=cues,fill=cues))+
+       geom_boxplot()
+
+
+```
+
+Bayesian model
+
+```{r}
+
+bayesianFit <- brm(gazeidx_fb~gazeidx*cues + (1|id),data=fbFix_ncrg_stgt, family=gaussian, save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000)
+summary(bayesianFit)
+bmfit_tab <- report_table(bayesianFit)
+bmfit_tab
+
+bayesianFit_gazeidxNull <- brm(gazeidx_fb~cues + (1|id),data=fbFix_ncrg_stgt, family=gaussian, save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000)
+summary(bayesianFit_gazeidxNull)
+bmfitnull_tab <- report_table(bayesianFit_gazeidxNull)
+bmfitnull_tab
+
+full_null = bayes_factor(bayesianFit, bayesianFit_gazeidxNull)
+full_null
+
+
+```
+
+
