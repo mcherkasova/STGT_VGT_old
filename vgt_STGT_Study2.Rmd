@@ -22,7 +22,7 @@ library(lmerTest)
 library(emmeans)
 library(ggplot2)
 library(tidyverse)
-library(dplyr)
+library(dplyr) #use in comination with report()
 library(influence.ME)
 library(gmodels)#CI
 library(corrplot)
@@ -31,7 +31,7 @@ library(gridExtra)
 library(ggeffects)
 library(sjPlot)
 library(brms)
-
+library(report) #use summary comman on top of 'report' commannd for essential info
 ```
 # Pavlovian eye data
 # Compute gaze index; identify ST and GT
@@ -41,7 +41,7 @@ Interest period for fixations excludes the orienting response, which we are assu
 	Gaze index computed as %dwell_time(CS)-%dwell_time(US)
 	STs and GTs identified using median split
 ```{r}
-stdata5000 <- read.csv("C:/Users/mashu/Documents/STUDIES/CUES/STpaper/ST_fixations/st_ncrg_or1000_cs5000_pit3_4_revd.csv")
+stdata5000 <- read.csv("st_ncrg_or1000_cs5000_pit3_4_revd.csv")
 
 #Rename
 names(stdata5000)[1] <- "id"
@@ -185,7 +185,7 @@ hist <- CSplus_h25000 %>%
 # Load IC + ratings file to get PIT versions
 
 ```{r}
-version <- read.csv("***/rating_IC_NCRG.csv")
+version <- read.csv("rating_IC_NCRG.csv")
 names(version)[1] <- "id"
 versionid <- version$id
 stid <- CSplus_h25000$id
@@ -276,7 +276,7 @@ grid.arrange(strip_plus,strip_minus,ncol=2)
 ## Read in VGT data
 ```{r}
 
-data <- read.csv("***/vgtNCRGreps.csv")
+data <- read.csv("vgtNCRGreps.csv")
 
 ```
 
@@ -370,7 +370,41 @@ plot_model(ml.1,type="pred", terms=c("EVR", "subj", "cues_factor"),pred.type="re
 
 ```
 
-#GLM2: Dimensional analysis of the effect of ST index on decision making in interaction with cues
+# Bayesian categorical full model
+
+```{r}
+bayesian_ml.cat.1 <- brm(riskychoice ~ STGT*cues_factor*EVR + order+ Rep_centered + (EVR+cues_factor+Rep_centered|subj), data=data_stgt,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.cat.1)
+bm_table.cat.1 <- report_table(bayesian_ml.cat.1)
+bm_table.cat.1
+
+```
+Bayesian categorical without gaze index x cues interactions
+```{r}
+bayesian_ml.cat.2 <- brm(riskychoice ~ STGT + cues_factor + EVR + order + Rep_centered + STGT*EVR + cues_factor*EVR + (EVR+cues_factor+Rep_centered|subj), data=data_stgt,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.cat.2)
+bm_table.cat.2 <- report_table(bayesian_ml.cat.2)
+bm_table.cat.2
+
+full_null = bayes_factor(bayesian_ml.cat.1, bayesian_ml.cat.2)
+full_null
+```
+Bayesian categorical model without gaze index x cuesxEVR interaction
+```{r}
+bayesian_ml.cat.3 <- update(bayesian_ml.cat.1, formula = ~ .-STGT:cues_factor:EVR) 
+
+summary(bayesian_ml.cat.3)
+bm_table.cat.3 <- report_table(bayesian_ml.cat.3)
+bm_table.cat.3
+
+full_null = bayes_factor(bayesian_ml.cat.1, bayesian_ml.cat.3)
+full_null
+
+```
+
+#GLM2: Dimensional analysis of the effect of gaze index on decision making in interaction with cues
 Gaze index defined over 5000ms
 
 ```{r}
@@ -390,6 +424,46 @@ plot_model(ml.2,type="pred", terms=c("EVR", "subj", "cues_factor"),pred.type="re
 
 #Look at the order effect
 plot_model(ml.2,type="pred", terms=c("EVR", "order"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+```
+
+# Bayesian dimensional full model
+```{r}
+bayesian_ml.1 <- brm(riskychoice ~ Gaze_index*cues_factor*EVR + order+ Rep_centered + (EVR+cues_factor+Rep_centered|subj), data=data_trimmed,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.1)
+bm_table <- report_table(bayesian_ml.1)
+bm_table
+```
+
+Bayesian dimensional model without gaze index x cues interactions
+
+```{r}
+bayesian_ml.2 <- brm(riskychoice ~ Gaze_index + cues_factor + EVR + order + Rep_centered + Gaze_index*EVR + cues_factor*EVR + (EVR+cues_factor+Rep_centered|subj), data=data_trimmed,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.2)
+bm_table <- report_table(bayesian_ml.2)
+bm_table
+
+full_null = bayes_factor(bayesian_ml.1, bayesian_ml.2)
+full_null
+```
+
+Bayesian dimensional model without gaze index x cuesxEVR interaction
+
+```{r}
+bayesian_ml.3 <- brm(riskychoice ~ Gaze_index + cues_factor + EVR + order + Rep_centered + Gaze_index*EVR + cues_factor*EVR + Gaze_index*cues_factor + (EVR+cues_factor+Rep_centered|subj), data=data_trimmed,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.3)
+bm_table <- report_table(bayesian_ml.3)
+bm_table
+
+full_null = bayes_factor(bayesian_ml.1, bayesian_ml.3)
+full_null
+
+full_null2 = bayes_factor(bayesian_ml.2, bayesian_ml.3)
+full_null2
+
+
 ```
 
 # Categorical post-hoc
