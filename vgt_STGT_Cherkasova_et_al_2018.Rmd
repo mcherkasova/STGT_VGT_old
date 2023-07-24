@@ -9,10 +9,10 @@ VGT analysis for sign- and goal trackers from Study 1 (Cherkasova et al 2018, JN
 
 ```{r, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-knitr::opts_knit$set(root.dir = "***")
+
 ```
 
-# Load packages
+Load packages
 
 ```{r, include=FALSE}
 
@@ -30,6 +30,8 @@ library(corrplot)
 library(arm)
 library(gridExtra)
 library(sjPlot)
+library(brms)
+library(report)
 ```
 
 ## Pavlovian eye data
@@ -47,9 +49,8 @@ Gaze index computed as %dwell_time(CS)-%dwell_time(US)
 STs and GTs identified using tertiary split
 
 ```{r, include=FALSE}
-# Aggregated data files (.csv) are available on OSF (https://osf.io/9b34v/)
-stdata <- read.csv("***/st_jn_or1000.csv")
-pit <- read.csv("***/PIT_version_jn.csv")
+stdata <- read.csv("st_jn_or1000.csv")
+pit <- read.csv("PIT_version_jn.csv")
 names(pit)[1]<-"id"
 
 #Rename
@@ -295,7 +296,7 @@ grid.arrange(strip_plus,strip_minus,ncol=2)
 ```
 
 ```{r}
-y <- read.csv("***/vgtCues_jn.csv")
+y <- read.csv("vgtCues_jn.csv")
 ```
 
 # Data preprocessing Study 1
@@ -399,7 +400,7 @@ ST and GT defined using a teriary split
 
 data_Xim$STGT <- relevel(data_Xim$STGT, ref = "GT") # The levels of a factor are re-ordered so that the level specified by ref is first and the others are moved down.
 
-ml = glmer(riskychoice ~ STGT*cues_factor*EVR + order + Rep_centered +(Rep_centered+EVR|subj), data=data_Xim, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
+ml = glmer(hiPchoice ~ STGT*cues_factor*EVR + order + Rep_centered +(Rep_centered+EVR|subj), data=data_Xim, family = binomial,control = glmerControl(optimizer="bobyqa")) # bound optimization by quadratic approximation (BOBYQA); benefits in terms of speed
 summary(ml)
 cc <- confint(ml,parm="beta_",method="Wald")  ## slow (~ 11 seconds)
 ctab <- cbind(est=fixef(ml),cc)
@@ -438,6 +439,52 @@ plot_model(ml.1,type="pred", terms=c("EVR", "STGT"),pred.type="fe", grid = FALSE
 
 ```
 
+# Bayesian categorical full model (including 214)
+
+```{r}
+bayesian_ml.cat <- brm(riskychoice ~ STGT*cues_factor*EVR + order+ Rep_centered + (EVR+Rep_centered|subj), data=data_Xim,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+#bm_report <-report_model(bayesian_ml.2)
+#priors <- report_priors(bayesian_ml.2)
+
+summary(bayesian_ml.cat)
+bm_table_cat <- report_table(bayesian_ml.cat)
+bm_table_cat
+
+# plot(bayesian_ml.2, variable = c("Gaze_index","cues_factor"))
+# conditional_effects(bayesian_ml.2)
+
+```
+
+# Bayesian categorical model excluding Gaze_index*cues*EVR (including 214)
+
+```{r}
+bayesian_ml.cat.null <- brm(riskychoice ~ STGT + cues_factor + EVR + order + Rep_centered + (EVR + Rep_centered | subj) + STGT*EVR + cues_factor*EVR, data=data_Xim,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+#bm_report <-report_model(bayesian_ml.2)
+#priors <- report_priors(bayesian_ml.2)
+
+summary(bayesian_ml.cat.null)
+bm_table_cat <- report_table(bayesian_ml.cat.null)
+bm_table_cat
+
+full_null_cat = bayes_factor(bayesian_ml.cat, bayesian_ml.cat.null)
+full_null_cat
+
+```
+
+# Bayesian categorical model excluding any interactions with gaze intex  (including 214)
+
+```{r}
+
+stgt_x_cues_null2 = update(bayesian_ml.cat, formula = ~ .-STGT:cues_factor:EVR)
+full_null_cat2 = bayes_factor(bayesian_ml.cat, stgt_x_cues_null2)
+full_null_cat2
+
+stgt_x_cues_null2_tab <- report_table(stgt_x_cues_null2)
+stgt_x_cues_null2_tab 
+
+
+```
+
 # GLM2 dimensional: Cues*Gaze_index*EVR 
 
 ```{r}
@@ -468,7 +515,41 @@ rtab <- exp(ctab)
 print(rtab,digits=3)
 
 plot_model(ml.3,type="pred", terms=c("EVR", "cues_factor", "Gaze_index"),pred.type="fe", grid = FALSE, colors=c( "orangered","black"))+ylab("p(Riskier prospect)")+theme_bw() +theme(plot.background = element_blank(),panel.grid.major = element_blank(),panel.grid.minor = element_blank(),legend.title = element_blank(),panel.spacing = unit(2, "lines"))
+```
 
+# Bayesian dimensional full model (including 214)
+```{r}
+bayesian_ml.1 <- brm(riskychoice ~ Gaze_index*cues_factor*EVR + order+ Rep_centered + (EVR+Rep_centered|subj), data=data,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+
+summary(bayesian_ml.1)
+bm_table <- report_table(bayesian_ml.1)
+bm_table
+
+```
+
+# Bayesian dimensional model excluding Gaze_index*cues*EVR (including 214)
+
+```{r}
+gazeidx_x_cues_null2 = update(bayesian_ml.2, formula = ~ .-Gaze_index:cues_factor:EVR)
+full_null = bayes_factor(bayesian_ml.2, gazeidx_x_cues_null2)
+full_null
+
+bm_null_table2 <- report_table(gazeidx_x_cues_null2)
+bm_null_table2 
+
+```
+
+# Bayesian dimensional model excluding any interactions with gaze intex  (including 214)
+
+```{r}
+bayesian_ml.2 <- brm(riskychoice ~ Gaze_index + cues_factor + EVR + order + Rep_centered + (EVR + Rep_centered | subj) + Gaze_index*EVR + cues_factor*EVR, data=data,  family=bernoulli(), save_pars = save_pars(all = TRUE), sample_prior = TRUE, iter = 10000) 
+summary(bayesian_ml.2)
+bm_table_noX <- report_table(bayesian_ml.2)
+
+bm_table_noX
+
+noXvsX = bayes_factor(bayesian_ml.1, bayesian_ml.2)
+noXvsX
 
 ```
 Outliers
